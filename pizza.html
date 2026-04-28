@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drag & Drop Pizza Builder</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles to hide scrollbars and handle dragging states */
+        body {
+            overscroll-behavior-y: contain; /* Prevents pull-to-refresh on mobile */
+        }
+        
+        .topping-item {
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none; /* Prevents scrolling when dragging on mobile */
+            transition: transform 0.1s;
+        }
+
+        .topping-item:active {
+            cursor: grabbing;
+            transform: scale(1.1);
+        }
+
+        /* Ghost element for mobile dragging */
+        .drag-ghost {
+            position: fixed;
+            pointer-events: none;
+            z-index: 1000;
+            font-size: 2.5rem;
+            transform: translate(-50%, -50%);
+            opacity: 0.8;
+            filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3));
+        }
+
+        .placed-topping {
+            position: absolute;
+            font-size: 2rem; /* Size of toppings on the pizza */
+            transform-origin: center;
+            user-select: none;
+            pointer-events: none; /* So we can drop toppings on top of other toppings */
+            filter: drop-shadow(2px 2px 2px rgba(0,0,0,0.2));
+            animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0) rotate(var(--rot)); opacity: 0; }
+            100% { transform: scale(1) rotate(var(--rot)); opacity: 1; }
+        }
+
+        #pizza-container {
+            /* Gives the crust a nice baked texture/shadow */
+            box-shadow: inset 0 0 20px rgba(139, 69, 19, 0.6), 0 10px 25px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body class="bg-orange-50 min-h-screen font-sans flex flex-col font-medium">
+
+    <!-- Header -->
+    <header class="bg-red-600 text-white p-4 shadow-md text-center">
+        <h1 class="text-3xl font-bold tracking-wider uppercase">🍕 Pizza Maker</h1>
+        <p class="text-red-100 text-sm mt-1">Drag and drop your favorite toppings!</p>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 flex flex-col lg:flex-row items-center justify-center gap-8 p-4 max-w-6xl mx-auto w-full">
+        
+        <!-- Pizza Area -->
+        <div class="flex-1 flex flex-col items-center justify-center w-full">
+            <div id="pizza-container" class="relative w-72 h-72 sm:w-96 sm:h-96 lg:w-[450px] lg:h-[450px] bg-yellow-600 rounded-full border-4 border-yellow-700 flex items-center justify-center overflow-hidden transition-transform">
+                
+                <!-- Sauce Layer -->
+                <div class="absolute inset-[8%] bg-red-600 rounded-full pointer-events-none"></div>
+                
+                <!-- Cheese Layer -->
+                <div class="absolute inset-[12%] bg-yellow-400 rounded-full pointer-events-none shadow-[inset_0_0_20px_rgba(200,100,0,0.3)]"></div>
+                
+                <!-- Toppings Layer (Where dropped items go) -->
+                <div id="toppings-layer" class="absolute inset-0 rounded-full"></div>
+                
+                <!-- Drop Target Overlay (Invisible, handles events) -->
+                <div id="drop-target" class="absolute inset-0 rounded-full z-10"></div>
+            </div>
+            
+            <button id="reset-btn" class="mt-8 bg-white border-2 border-red-500 text-red-600 hover:bg-red-500 hover:text-white transition-colors px-6 py-2 rounded-full font-bold shadow-sm flex items-center gap-2 active:scale-95">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                Reset Pizza
+            </button>
+        </div>
+
+        <!-- Ingredients Palette -->
+        <div class="w-full lg:w-80 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden flex flex-col h-auto max-h-[500px]">
+            <div class="bg-gray-50 border-b border-gray-100 p-4">
+                <h2 class="text-xl font-bold text-gray-800 text-center">Toppings</h2>
+            </div>
+            
+            <div class="p-4 grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-3 gap-4 overflow-y-auto" id="palette">
+                <!-- Toppings injected by JS -->
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Embedded Gemini Share Link -->
+    <section class="w-full max-w-6xl mx-auto p-4 mb-8">
+        <h2 class="text-xl font-bold text-gray-800 mb-4 text-center">Shared Conversation</h2>
+        <div class="bg-white rounded-2xl shadow-xl overflow-hidden border border-gray-100 h-[600px] w-full">
+            <iframe src="https://gemini.google.com/share/c5e761eb8292" class="w-full h-full border-0" title="Gemini Shared Conversation"></iframe>
+        </div>
+    </section>
+
+    <script>
+        // Data for available toppings
+        const availableToppings = [
+            { id: 'pepperoni', emoji: '🔴', name: 'Pepperoni' }, // Using red circle for classic pepperoni look
+            { id: 'mushroom', emoji: '🍄', name: 'Mushroom' },
+            { id: 'onion', emoji: '🧅', name: 'Onion' },
+            { id: 'olive', emoji: '🫒', name: 'Olive' },
+            { id: 'pepper', emoji: '🫑', name: 'Bell Pepper' },
+            { id: 'tomato', emoji: '🍅', name: 'Tomato' },
+            { id: 'basil', emoji: '🌿', name: 'Basil' },
+            { id: 'pineapple', emoji: '🍍', name: 'Pineapple' },
+            { id: 'bacon', emoji: '🥓', name: 'Bacon' },
+            { id: 'cheese', emoji: '🧀', name: 'Extra Cheese' },
+            { id: 'garlic', emoji: '🧄', name: 'Garlic' },
+            { id: 'broccoli', emoji: '🥦', name: 'Broccoli' },
+        ];
+
+        const paletteContainer = document.getElementById('palette');
+        const toppingsLayer = document.getElementById('toppings-layer');
+        const dropTarget = document.getElementById('drop-target');
+        const resetBtn = document.getElementById('reset-btn');
+
+        // State for mobile drag and drop
+        let draggedEmoji = null;
+        let ghostElement = null;
+
+        // Initialize Palette
+        function initPalette() {
+            availableToppings.forEach(topping => {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'flex flex-col items-center gap-1 group';
+
+                const toppingEl = document.createElement('div');
+                toppingEl.className = 'topping-item w-16 h-16 bg-orange-50 rounded-full flex items-center justify-center text-4xl shadow-sm border border-orange-100 group-hover:bg-orange-100 group-hover:shadow-md transition-all';
+                toppingEl.innerText = topping.emoji;
+                toppingEl.setAttribute('draggable', 'true');
+                toppingEl.dataset.emoji = topping.emoji;
+                
+                const label = document.createElement('span');
+                label.className = 'text-xs text-gray-500 font-medium text-center';
+                label.innerText = topping.name;
+
+                wrapper.appendChild(toppingEl);
+                wrapper.appendChild(label);
+                paletteContainer.appendChild(wrapper);
+
+                // --- Desktop Drag Events ---
+                toppingEl.addEventListener('dragstart', (e) => {
+                    e.dataTransfer.setData('text/plain', topping.emoji);
+                    e.dataTransfer.effectAllowed = 'copy';
+                    // Slight visual feedback
+                    toppingEl.style.opacity = '0.5';
+                });
+
+                toppingEl.addEventListener('dragend', () => {
+                    toppingEl.style.opacity = '1';
+                });
+
+                // --- Mobile Touch Events ---
+                toppingEl.addEventListener('touchstart', handleTouchStart, { passive: false });
+            });
+        }
+
+        // Add a topping to the pizza
+        function addToppingToPizza(emoji, x, y) {
+            const el = document.createElement('div');
+            el.className = 'placed-topping';
+            el.innerText = emoji;
+            
+            // Randomize rotation for a natural look
+            const rotation = Math.floor(Math.random() * 360);
+            el.style.setProperty('--rot', `${rotation}deg`);
+            
+            // Adjust position so the center of the emoji is at the cursor
+            // (Assuming text-size 2rem is ~32px, offset by ~16px)
+            el.style.left = `calc(${x}px - 16px)`;
+            el.style.top = `calc(${y}px - 16px)`;
+            
+            toppingsLayer.appendChild(el);
+        }
+
+        // --- Desktop Drop Target Logic ---
+        dropTarget.addEventListener('dragover', (e) => {
+            e.preventDefault(); // Necessary to allow dropping
+            e.dataTransfer.dropEffect = 'copy';
+        });
+
+        dropTarget.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const emoji = e.dataTransfer.getData('text/plain');
+            if (emoji) {
+                // Get coordinates relative to the drop target
+                const rect = dropTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                addToppingToPizza(emoji, x, y);
+            }
+        });
+
+        // --- Mobile Touch Drag & Drop Logic ---
+        function handleTouchStart(e) {
+            // Prevent default to stop scrolling while dragging a topping
+            e.preventDefault();
+            
+            const touch = e.touches[0];
+            const target = e.currentTarget;
+            draggedEmoji = target.dataset.emoji;
+
+            // Create ghost element that follows the finger
+            ghostElement = document.createElement('div');
+            ghostElement.className = 'drag-ghost';
+            ghostElement.innerText = draggedEmoji;
+            ghostElement.style.left = `${touch.clientX}px`;
+            ghostElement.style.top = `${touch.clientY}px`;
+            document.body.appendChild(ghostElement);
+
+            document.addEventListener('touchmove', handleTouchMove, { passive: false });
+            document.addEventListener('touchend', handleTouchEnd);
+        }
+
+        function handleTouchMove(e) {
+            if (!ghostElement) return;
+            e.preventDefault(); // Stop scrolling
+            const touch = e.touches[0];
+            ghostElement.style.left = `${touch.clientX}px`;
+            ghostElement.style.top = `${touch.clientY}px`;
+        }
+
+        function handleTouchEnd(e) {
+            if (!ghostElement) return;
+            
+            const touch = e.changedTouches[0];
+            
+            // Check what element is under the finger when released
+            // We temporarily hide the ghost to find the element underneath
+            ghostElement.style.display = 'none';
+            const elementUnderFinger = document.elementFromPoint(touch.clientX, touch.clientY);
+            ghostElement.style.display = 'block';
+
+            // If dropped on the pizza
+            if (elementUnderFinger === dropTarget || elementUnderFinger === toppingsLayer) {
+                const rect = dropTarget.getBoundingClientRect();
+                const x = touch.clientX - rect.left;
+                const y = touch.clientY - rect.top;
+                
+                // Make sure it's within the pizza boundaries
+                if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
+                     addToppingToPizza(draggedEmoji, x, y);
+                }
+            }
+
+            // Cleanup
+            ghostElement.remove();
+            ghostElement = null;
+            draggedEmoji = null;
+            
+            document.removeEventListener('touchmove', handleTouchMove);
+            document.removeEventListener('touchend', handleTouchEnd);
+        }
+
+        // --- Reset Logic ---
+        resetBtn.addEventListener('click', () => {
+            toppingsLayer.innerHTML = '';
+            
+            // Add a little pop animation to the pizza container to indicate reset
+            const container = document.getElementById('pizza-container');
+            container.style.transform = 'scale(0.95)';
+            setTimeout(() => {
+                container.style.transform = 'scale(1)';
+            }, 150);
+        });
+
+        // Initialize the app
+        initPalette();
+    </script>
+</body>
+</html>
